@@ -44,8 +44,10 @@ static UserInputMessage ui_msg = { 0 };
 
 static volatile uint32_t sys_tick = 0;
 
-void initSysTicker(void);
-uint32_t getSysTick(void);
+static void initSysTicker(void);
+static uint32_t getSysTick(void);
+static void rightButtonPressIsr(void);
+static void leftButtonPressIsr(void);
 
 void setup() {
   Serial.begin(115200);
@@ -71,6 +73,9 @@ void setup() {
   pinMode(R_Z_PIN, INPUT_PULLUP);
   pinMode(L_Z_PIN, INPUT_PULLUP);
 
+  attachInterrupt(digitalPinToInterrupt(R_Z_PIN), rightButtonPressIsr, FALLING);
+  attachInterrupt(digitalPinToInterrupt(L_Z_PIN), leftButtonPressIsr, FALLING);
+
   if (radio_init_success) {
     display.println("init success");
     display.display();
@@ -86,36 +91,11 @@ void setup() {
 
 void loop() {
   static uint32_t task_100ms_trigger_ticks = 0;
-  static uint8_t r_closed_cnt = 0;
-  static uint8_t l_closed_cnt = 0;
 
   const uint32_t cur_sys_tick = getSysTick();
 
-  if (LOW == digitalRead(R_Z_PIN)) {
-    // switch closed
-    r_closed_cnt++;
-  }
-
-  if (LOW == digitalRead(L_Z_PIN)) {
-    // switch closed
-    l_closed_cnt++;
-  }
-
   if (cur_sys_tick > task_100ms_trigger_ticks) {
     task_100ms_trigger_ticks += 100;
-
-    if (r_closed_cnt > 100)
-    {
-      ui_msg.r_joystick.z_press_cnt++;
-    }
-
-    if (l_closed_cnt > 100)
-    {
-      ui_msg.l_joystick.z_press_cnt++;
-    }
-
-    r_closed_cnt = 0;
-    l_closed_cnt = 0;
 
     ui_msg.l_joystick.x_counts = analogRead(L_X_PIN);
     ui_msg.l_joystick.y_counts = analogRead(L_Y_PIN);
@@ -123,23 +103,16 @@ void loop() {
     ui_msg.r_joystick.x_counts = analogRead(R_X_PIN);
     ui_msg.r_joystick.y_counts = analogRead(R_Y_PIN);
 
-    unsigned long start_timer = micros();
-    bool report = radio.write(&ui_msg, sizeof(UserInputMessage));
-    unsigned long end_timer = micros();
+    const bool report = radio.write(&ui_msg, sizeof(UserInputMessage));
     ui_msg.header.tx_cnt++;
 
-    if (report) {
-      Serial.print("Transmission successful! ");
-      Serial.print("Time to transmit = ");
-      Serial.print(end_timer - start_timer);
-      Serial.println(" us.");
-    } else {
+    if (!report) {
       Serial.println("Transmission failed or timed out");
     }
   }
 }
 
-void initSysTicker(void) {
+static void initSysTicker(void) {
   TCCR1A = 0;  // set entire TCCR0A register to 0
   TCCR1B = 0;  // same for TCCR0B
   TCNT1  = 0;  // initialize counter value to 0
@@ -161,9 +134,31 @@ ISR(TIMER1_COMPA_vect) {
   sys_tick++;
 }
 
-uint32_t getSysTick(void) {
+static uint32_t getSysTick(void) {
   cli();  // disable interrupts
   const uint32_t temp = sys_tick;
   sei();  // enable interrupts
   return temp;
+}
+
+static void rightButtonPressIsr(void) {
+  static uint32_t last_press_tick = 0;
+  uint32_t current_tick = getSysTick();
+  
+  if ((current_tick - last_press_tick) > 100)
+  {
+    ui_msg.r_joystick.z_press_cnt++;
+    last_press_tick = current_tick;
+  }
+}
+
+static void leftButtonPressIsr(void) {
+  static uint32_t last_press_tick = 0;
+  uint32_t current_tick = getSysTick();
+  
+  if ((current_tick - last_press_tick) > 100)
+  {
+    ui_msg.l_joystick.z_press_cnt++;
+    last_press_tick = current_tick;
+  }
 }
